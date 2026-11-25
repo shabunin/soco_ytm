@@ -96,9 +96,11 @@ rpc.exports = {
       heap: [],
       token: [],
       keys: [],
-      households: []
+      households: [],
+      sn: [],
+      cdudn: []
     };
-    const seenH = {}, seenK = {}, seenT = {}, seenKey = {}, seenHH = {};
+    const seenH = {}, seenK = {}, seenT = {}, seenKey = {}, seenHH = {}, seenSN = {}, seenCD = {};
 
     const HDR   = "58 2d 47 6f 6f 67 2d 41 70 69 2d 4b 65 79 3a 20"; // "X-Goog-Api-Key: "
     const AIZA  = "41 49 7a 61 53 79";                               // "AIzaSy"
@@ -107,6 +109,8 @@ rpc.exports = {
     const KEY_T = "3c 6b 65 79 3e";                                  // "<key>"
     const PKEY  = "3c 70 72 69 76 61 74 65 4b 65 79 3e";             // "<privateKey>"
     const HH    = "53 6f 6e 6f 73 5f";                               // "Sonos_"
+    const SIDP  = "73 69 64 3d 32 38 34 26";                         // "sid=284&"
+    const SVC   = "23 53 76 63 37 32 37 31 31 2d";                   // "#Svc72711-"
 
     for (const r of Process.enumerateRanges('rw-')) {
       // 1) X-Goog-Api-Key Header
@@ -151,6 +155,24 @@ rpc.exports = {
           let s = ""; try { s = m.address.readUtf8String(80); } catch (e) { continue; }
           const x = /Sonos_[0-9A-Za-z]{24,32}(?:_[0-9a-f]{6,10})?/.exec(s);
           if (x && !seenHH[x[0]]) { seenHH[x[0]] = 1; out.households.push(x[0]); }
+        }
+      } catch (e) {}
+
+      // 6) account serial: "sid=284&...sn=N" in track/station URIs
+      try {
+        for (const m of Memory.scanSync(r.base, r.size, SIDP)) {
+          let s = ""; try { s = m.address.readUtf8String(60); } catch (e) { continue; }
+          const x = /^sid=284&[^"<\s]*?sn=(\d+)/.exec(s);
+          if (x && !seenSN[x[1]]) { seenSN[x[1]] = 1; out.sn.push(x[1]); }
+        }
+      } catch (e) {}
+
+      // 7) cdudn tag: "#Svc72711-<suffix>-Token"
+      try {
+        for (const m of Memory.scanSync(r.base, r.size, SVC)) {
+          let s = ""; try { s = m.address.readUtf8String(40); } catch (e) { continue; }
+          const x = /^#Svc72711-([0-9A-Za-z]+)-Token/.exec(s);
+          if (x && !seenCD[x[1]]) { seenCD[x[1]] = 1; out.cdudn.push(x[1]); }
         }
       } catch (e) {}
     }
@@ -202,7 +224,11 @@ valid = lambda k: bool(re.fullmatch(r"AIza[0-9A-Za-z_\-]{35}", k))
 api_key = res["header"][0] if res["header"] else (res["heap"][0] if res["heap"] else None)
 ya29_token = res["token"][0] if res["token"] else None
 private_key = res["keys"][0] if res["keys"] else None
-household_id = res["households"][0] if res["households"] else None
+# Prefer the SMAPI form "Sonos_<id>_<suffix>" over the bare household id.
+households = sorted(res["households"], key=lambda h: h.count("_") < 2)
+household_id = households[0] if households else None
+sn = res["sn"][0] if res["sn"] else None
+cdudn = ("SA_RINCON72711_X_#Svc72711-%s-Token" % res["cdudn"][0]) if res["cdudn"] else None
 
 # Get device info from speaker if possible
 device_id = None
@@ -220,13 +246,34 @@ try:
         if info.get("mac_address"):
             mac = info["mac_address"].replace(":", "-").upper()
             device_id = f"{mac}:B"
+        if not (sn and cdudn):
+            from soco_ytmusic import detect_account
+            det = detect_account(sp)
+            sn, cdudn = sn or det["sn"], cdudn or det["cdudn"]
         if not household_id and sp.household_id:
             household_id = sp.household_id
-except Exception:
-    pass
+except Exception as e:
+    log(f"[!] speaker lookup failed: {e}")
 
-household_id = household_id or "Sonos_Household"
-device_id = device_id or "00-00-00-00-00-00:B"
+# The SMAPI householdId carries the same suffix as the cdudn tag
+# ("Sonos_<id>_<suffix>"); rebuild it if memory only had the bare id.
+if household_id and household_id.count("_") < 2 and cdudn:
+    from soco_ytmusic import cdudn_suffix
+    sfx = cdudn_suffix(cdudn)
+    if sfx:
+        household_id = f"{household_id}_{sfx}"
+
+problems = []
+if not household_id:
+    problems.append("household_id not found")
+elif household_id.count("_") < 2:
+    problems.append(f"household_id '{household_id}' has no _suffix (SMAPI calls may fail)")
+if not device_id:
+    problems.append("device_id not found (no speaker reachable; pass --speaker)")
+if not sn:
+    problems.append("sn (account serial) not found")
+if not cdudn:
+    problems.append("cdudn not found")
 
 if args.json:
     print(json.dumps({
@@ -235,7 +282,10 @@ if args.json:
         "private_key": private_key,
         "household_id": household_id,
         "device_id": device_id,
+        "sn": sn,
+        "cdudn": cdudn,
         "ya29": ya29_token,
+        "problems": problems,
         "api_key_candidates": sorted(set(res["header"] + res["heap"])),
     }, indent=2))
 else:
@@ -257,7 +307,14 @@ else:
 
     print(f"household_id: {household_id}")
     print(f"device_id:    {device_id}")
+    print(f"sn:           {sn}")
+    print(f"cdudn:        {cdudn}")
     print("===============================================")
+    for p in problems:
+        print(f"[!] {p}")
+    if not (sn and cdudn):
+        print("    -> play any YouTube Music song from the Sonos app on this speaker "
+              "(or add one to Sonos Favorites) and re-run this script.")
 
 if not args.no_save and api_key and (private_key or ya29_token):
     # Save sonos_creds.json
@@ -266,8 +323,12 @@ if not args.no_save and api_key and (private_key or ya29_token):
         "x_sonos_api_key": "85f746ce-7307-4acf-bc36-71c9979d7b00",
         "private_key": private_key or "",
         "household_id": household_id,
-        "device_id": device_id
+        "device_id": device_id,
     }
+    if sn:
+        creds_data["sn"] = sn
+    if cdudn:
+        creds_data["cdudn"] = cdudn
     with open(DEFAULT_CFG, "w") as f:
         json.dump(creds_data, f, indent=2)
     log(f"[✓] Saved config to {DEFAULT_CFG}")

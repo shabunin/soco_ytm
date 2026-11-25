@@ -67,6 +67,46 @@ def _classify_fault(raw):
     return ("APP", " — ".join(parts) if parts else fs.strip()[:160])
 
 
+# ---------------------------------------------------------------------------
+# Account detection: the account serial (sn=N) and the cdudn tag are specific
+# to each household's YouTube Music link. Read them from the speaker's own
+# favorites/queue, where any YT Music item already carries both.
+# ---------------------------------------------------------------------------
+SID = "284"
+_SN_RE    = re.compile(r"sid=" + SID + r"&[^\"<\s]*?sn=(\d+)")
+_CDUDN_RE = re.compile(r"SA_RINCON(\d+)_X_#Svc\1-([^<\s-]+)-Token")
+
+
+def detect_account(device):
+    """Return {'sn': str|None, 'cdudn': str|None} found on the speaker."""
+    found = {"sn": None, "cdudn": None}
+    for oid in ("FV:2", "Q:0"):
+        try:
+            r = device.contentDirectory.Browse([
+                ("ObjectID", oid), ("BrowseFlag", "BrowseDirectChildren"),
+                ("Filter", "*"), ("StartingIndex", 0), ("RequestedCount", 500),
+                ("SortCriteria", "")])
+        except Exception:
+            continue
+        x = html.unescape(r.get("Result", ""))
+        if not found["sn"]:
+            m = _SN_RE.search(x)
+            if m:
+                found["sn"] = m.group(1)
+        if not found["cdudn"]:
+            m = _CDUDN_RE.search(x)
+            if m and m.group(1) == str(int(SID) * 256 + 7):
+                found["cdudn"] = m.group(0)
+        if found["sn"] and found["cdudn"]:
+            break
+    return found
+
+
+def cdudn_suffix(cdudn):
+    m = _CDUDN_RE.search(cdudn or "")
+    return m.group(2) if m else None
+
+
 class YouTubeMusicSoapClient(MusicServiceSoapClient):
     """MusicServiceSoapClient implementing YT Music's OAuth2-Bearer dialect."""
 
@@ -251,15 +291,33 @@ class YouTubeMusic(MusicService):
         return out
 
     # ---------- playback ----------
-    @property
-    def _cdudn(self):
-        if self._creds.get("cdudn"):
-            return self._creds["cdudn"]
-        st = self.service_type
-        suffix = self._creds.get("household_id", "").rsplit("_", 1)[-1]
-        return f"SA_RINCON{st}_X_#Svc{st}-{suffix}-Token"
+    def _account(self, device):
+        """Resolve sn + cdudn: sonos_creds.json first, then the speaker."""
+        if getattr(self, "_acct", None):
+            return self._acct
+        sn, cd = self._creds.get("sn"), self._creds.get("cdudn")
+        if (not sn or not cd) and device is not None:
+            det = detect_account(device)
+            sn, cd = sn or det["sn"], cd or det["cdudn"]
+        if not cd:
+            suffix = None
+            hh = self._creds.get("household_id", "")
+            if "_" in hh[len("Sonos_"):]:
+                suffix = hh.rsplit("_", 1)[-1]
+            if suffix:
+                st = self.service_type
+                cd = f"SA_RINCON{st}_X_#Svc{st}-{suffix}-Token"
+        if not sn or not cd:
+            raise RuntimeError(
+                "Could not determine this household's YouTube Music account "
+                f"(sn={sn!r}, cdudn={cd!r}).\n"
+                "Fix: in the Sonos app, play any YouTube Music song on this speaker "
+                "(or add one to Sonos Favorites), then retry — or re-run extract_apikey.py, "
+                "or set \"sn\"/\"cdudn\" in sonos_creds.json manually.")
+        self._acct = (str(sn), cd)
+        return self._acct
 
-    def _didl(self, item_id, cls, title, artist="", album=""):
+    def _didl(self, item_id, cls, cdudn, title, artist="", album=""):
         esc = lambda s: html.escape(s or "", quote=True)
         return ('<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" '
                 'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" '
@@ -269,7 +327,7 @@ class YouTubeMusic(MusicService):
                 f'<dc:title>{esc(title)}</dc:title><upnp:class>{cls}</upnp:class>'
                 f'<dc:creator>{esc(artist)}</dc:creator><upnp:album>{esc(album)}</upnp:album>'
                 f'<desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">'
-                f'{self._cdudn}</desc></item></DIDL-Lite>')
+                f'{cdudn}</desc></item></DIDL-Lite>')
 
     def play_tracks(self, device, tracks, volume=None):
         """Replace the queue with `tracks` (each {'id','title','artist'}) and play."""
@@ -277,11 +335,12 @@ class YouTubeMusic(MusicService):
             raise ValueError("No tracks provided to play_tracks()")
         if volume is not None:
             device.volume = volume
+        sn, cdudn = self._account(device)
         device.clear_queue()
         for t in tracks:
-            uri = f"x-sonosapi-hls-static:{t['id']}?sid=284&flags=8&sn=3"
+            uri = f"x-sonosapi-hls-static:{t['id']}?sid={SID}&flags=8&sn={sn}"
             meta = self._didl("00032020" + t["id"],
-                              "object.item.audioItem.musicTrack",
+                              "object.item.audioItem.musicTrack", cdudn,
                               t.get("title", ""), t.get("artist", ""), t.get("album", ""))
             device.avTransport.AddURIToQueue([
                 ("InstanceID", 0), ("EnqueuedURI", uri), ("EnqueuedURIMetaData", meta),
@@ -293,9 +352,10 @@ class YouTubeMusic(MusicService):
         """Start an endless station (track-radio programId or Artist Radio id)."""
         if volume is not None:
             device.volume = volume
-        uri = f"x-sonosapi-radio:{program_id}?sid=284&flags=8300&sn=3"
+        sn, cdudn = self._account(device)
+        uri = f"x-sonosapi-radio:{program_id}?sid={SID}&flags=8300&sn={sn}"
         meta = self._didl("100c206c" + program_id,
-                          "object.item.audioItem.audioBroadcast.#station", title)
+                          "object.item.audioItem.audioBroadcast.#station", cdudn, title)
         device.avTransport.SetAVTransportURI([
             ("InstanceID", 0), ("CurrentURI", uri), ("CurrentURIMetaData", meta)])
         device.play()

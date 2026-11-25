@@ -62,6 +62,12 @@ Because Sonos encrypts the Google API key in its bundle (`apiKey.cr`) and stores
 
 This generates `sonos_creds.json` and `.ya29_cache` in the project directory. You can now close `SonosPatched.app`.
 
+> **Account serial (`sn`) and `cdudn`**: playback needs your household's YouTube Music
+> account serial and service tag. They differ per household, so they're auto-detected from
+> any YouTube Music item in the speaker's queue or Sonos Favorites (and saved by the extractor
+> when found). If detection fails, play any YouTube Music song from the Sonos app once and
+> retry, or set `"sn"` / `"cdudn"` in `sonos_creds.json` yourself.
+
 ---
 
 ## CLI Usage
