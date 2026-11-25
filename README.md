@@ -55,10 +55,14 @@ Because Sonos encrypts the Google API key in its bundle (`apiKey.cr`) and stores
    open ./SonosPatched.app
    ```
 4. **Click YouTube Music** once in the app (browse or play any song).
-5. **Run the extractor**:
+5. **Run the extractor** and leave the patched app open while it waits:
    ```bash
-   python3 extract_apikey.py
+   python3 extract_apikey.py --wait-refresh
    ```
+   The durable `private_key` (your refresh token) is only sent when the app refreshes
+   its access token, about once an hour. `--wait-refresh` keeps listening until that
+   happens (up to 65 min, or pass a number of seconds). Without it you get a working
+   token for about an hour, but automatic refresh won't work.
 
 This generates `sonos_creds.json` and `.ya29_cache` in the project directory. You can now close `SonosPatched.app`.
 

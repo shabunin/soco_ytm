@@ -26,6 +26,9 @@ AP.add_argument("--no-save", action="store_true", help="do not write sonos_creds
 AP.add_argument("--speaker", default=None, help="speaker IP or name for device info (optional auto-detect)")
 AP.add_argument("--json", action="store_true", help="print results as JSON")
 AP.add_argument("--listen", type=int, default=15, help="seconds to listen for live TLS requests via hook (default: 15s)")
+AP.add_argument("--wait-refresh", type=int, nargs="?", const=3900, default=0, metavar="SECONDS",
+                help="keep listening until the app refreshes its token, which is the only time "
+                     "the durable private_key is sent (default when given: 3900s = 65 min)")
 args = AP.parse_args()
 
 
@@ -198,11 +201,35 @@ elif args.listen > 0:
     log(f"[*] scanning memory & listening for {args.listen}s (click YouTube Music in the app to trigger traffic)...")
     time.sleep(args.listen)
 
+KEY_RE = re.compile(r"<(?:key|privateKey)>([A-Za-z0-9+/=]{60,250})</")
+
+if args.wait_refresh > 0:
+    # The durable <key> (refresh token) only goes over the wire when the app
+    # refreshes its ~1h ya29 token, so keep the hook attached until that happens.
+    log(f"[*] waiting up to {args.wait_refresh // 60} min for the app's hourly token refresh "
+        "(keep the Sonos app running; Ctrl+C to give up)...")
+    deadline, next_scan = time.time() + args.wait_refresh, time.time() + 120
+    got = False
+    try:
+        while time.time() < deadline and not got:
+            time.sleep(2)
+            got = any(KEY_RE.search(t) for t in captured_traffic)
+            if not got and time.time() >= next_scan:   # fallback if the hook misses
+                next_scan = time.time() + 120
+                got = bool(script.exports_sync.scan()["keys"])
+            if not args.json and not got:
+                left = int(deadline - time.time())
+                print(f"\r    still waiting… {left // 60:02d}:{left % 60:02d} left ", end="", flush=True)
+    except KeyboardInterrupt:
+        pass
+    log("\n[✓] refresh caught — private_key captured" if got
+        else "\n[!] no token refresh seen; private_key may be missing")
+
 res = script.exports_sync.scan()
 
 # Process any captured TLS traffic from the hook
 for traffic in captured_traffic:
-    m_key = re.search(r"<(?:key|privateKey)>([A-Za-z0-9+/=]{60,250})</", traffic)
+    m_key = KEY_RE.search(traffic)
     if m_key and m_key.group(1) not in res["keys"]:
         res["keys"].append(m_key.group(1))
 
@@ -274,6 +301,8 @@ if not sn:
     problems.append("sn (account serial) not found")
 if not cdudn:
     problems.append("cdudn not found")
+if not private_key:
+    problems.append("private_key not found (token auto-refresh won't work; use --wait-refresh)")
 
 if args.json:
     print(json.dumps({
@@ -312,6 +341,9 @@ else:
     print("===============================================")
     for p in problems:
         print(f"[!] {p}")
+    if not private_key:
+        print("    -> private_key is only sent during the app's hourly token refresh; re-run with "
+              "--wait-refresh and leave the Sonos app open (up to ~1h).")
     if not (sn and cdudn):
         print("    -> play any YouTube Music song from the Sonos app on this speaker "
               "(or add one to Sonos Favorites) and re-run this script.")
