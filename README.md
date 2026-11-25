@@ -21,7 +21,7 @@ Sonos integrates with YouTube Music via SMAPI (`https://music.googleapis.com/v1:
 
 To use this library with your own Sonos system, you extract your system's Google API key and SMAPI credentials once from your local Sonos desktop app using the included helper tools.
 
-For full reverse-engineering details, see [docs/reverse-engineering.md](docs/reverse-engineering.md) and [docs/integration-design.md](docs/integration-design.md).
+For full reverse-engineering details, see [docs/reverse-engineering.md](docs/reverse-engineering.md) and [docs/integration-design.md](docs/integration-design.md) (in Russian; Russian original of the RE doc: [docs/reverse-engineering.ru.md](docs/reverse-engineering.ru.md)).
 
 ---
 
