@@ -1,0 +1,7 @@
+{
+  "x_goog_api_key": "AIzaSy...",
+  "x_sonos_api_key": "85f746ce-7307-4acf-bc36-71c9979d7b00",
+  "private_key": "<base64_encoded_protobuf_refresh_token>",
+  "household_id": "Sonos_...",
+  "device_id": "XX-XX-XX-XX-XX-XX:B"
+}

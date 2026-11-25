@@ -1,0 +1,29 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C/Binary apps and bundles
+*.app/
+SonosPatched.app/
+*.bin
+*.plist
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Credentials, secrets, and caches (CRITICAL: DO NOT COMMIT)
+sonos_creds.json
+*creds*.json
+!sonos_creds.example.json
+.ya29_cache
+*.cache
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
