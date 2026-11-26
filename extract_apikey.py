@@ -47,7 +47,8 @@ elif args.pid:
     resume = False
     log("[*] attaching to pid %d" % pid)
 else:
-    pid = next((p.pid for p in dev.enumerate_processes() if p.name == args.name), None)
+    target_names = {args.name.lower(), f"{args.name.lower()}.exe"}
+    pid = next((p.pid for p in dev.enumerate_processes() if p.name.lower() in target_names), None)
     if pid is None:
         sys.exit("[!] process '%s' not found — launch the (patched) app or pass --pid/--spawn." % args.name)
     resume = False
@@ -69,25 +70,27 @@ const captured = [];
 rpc.exports = {
   setupHook: function () {
     try {
-      const mod = Process.findModuleByName("Sonos");
-      if (mod) {
-        // mbedtls_ssl_write offset from reverse-engineering notes: 0xc0a740
-        const pWrite = mod.base.add(0xc0a740);
-        Interceptor.attach(pWrite, {
-          onEnter: function (args) {
-            try {
-              const len = args[2].toInt();
-              if (len > 0 && len < 65536) {
-                const s = args[1].readUtf8String(Math.min(len, 4096));
-                if (s && (s.indexOf("googleapis.com") !== -1 || s.indexOf("refreshAuthToken") !== -1 ||
-                          s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1)) {
-                  send({ type: "traffic", data: s });
+      if (Process.platform === "darwin") {
+        const mod = Process.findModuleByName("Sonos");
+        if (mod) {
+          // mbedtls_ssl_write offset from reverse-engineering notes: 0xc0a740 (macOS only)
+          const pWrite = mod.base.add(0xc0a740);
+          Interceptor.attach(pWrite, {
+            onEnter: function (args) {
+              try {
+                const len = args[2].toInt();
+                if (len > 0 && len < 65536) {
+                  const s = args[1].readUtf8String(Math.min(len, 4096));
+                  if (s && (s.indexOf("googleapis.com") !== -1 || s.indexOf("refreshAuthToken") !== -1 ||
+                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1)) {
+                    send({ type: "traffic", data: s });
+                  }
                 }
-              }
-            } catch (e) {}
-          }
-        });
-        return true;
+              } catch (e) {}
+            }
+          });
+          return true;
+        }
       }
     } catch (e) {}
     return false;

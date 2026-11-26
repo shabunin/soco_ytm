@@ -42,8 +42,18 @@ pip install -r requirements.txt
 
 ### 2. One-Time Credential Setup
 
-Because Sonos encrypts the Google API key in its bundle (`apiKey.cr`) and stores tokens in macOS Keychain, credentials are read from process memory:
+Because Sonos encrypts the Google API key in its bundle (`apiKey.cr`) and stores tokens securely, credentials are read from process memory of the official Sonos desktop controller:
 
+#### On Windows:
+1. **Launch the official Sonos app** (`Sonos.exe`).
+2. **Click YouTube Music** once in the app (browse or play any song).
+3. **Run the extractor**:
+   ```powershell
+   py extract_apikey.py
+   ```
+   *(Optional: pass `--wait-refresh` to capture the durable refresh token for automatic renewal).*
+
+#### On macOS:
 1. **Quit the running Sonos app** (`Cmd + Q`).
 2. **Create a debuggable copy** of `Sonos.app`:
    ```bash
@@ -64,7 +74,7 @@ Because Sonos encrypts the Google API key in its bundle (`apiKey.cr`) and stores
    happens (up to 65 min, or pass a number of seconds). Without it you get a working
    token for about an hour, but automatic refresh won't work.
 
-This generates `sonos_creds.json` and `.ya29_cache` in the project directory. You can now close `SonosPatched.app`.
+This generates `sonos_creds.json` and `.ya29_cache` in the project directory. You can now close the Sonos app.
 
 > **Account serial (`sn`) and `cdudn`**: playback needs your household's YouTube Music
 > account serial and service tag. They differ per household, so they're auto-detected from
