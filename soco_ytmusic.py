@@ -336,16 +336,29 @@ class YouTubeMusic(MusicService):
         if volume is not None:
             device.volume = volume
         sn, cdudn = self._account(device)
-        device.clear_queue()
-        for t in tracks:
+        try:
+            device.stop()
+        except Exception:
+            pass
+        try:
+            device.clear_queue()
+        except Exception:
+            pass
+        first_track_idx = 0
+        for i, t in enumerate(tracks):
             uri = f"x-sonosapi-hls-static:{t['id']}?sid={SID}&flags=8&sn={sn}"
             meta = self._didl("00032020" + t["id"],
                               "object.item.audioItem.musicTrack", cdudn,
                               t.get("title", ""), t.get("artist", ""), t.get("album", ""))
-            device.avTransport.AddURIToQueue([
+            res = device.avTransport.AddURIToQueue([
                 ("InstanceID", 0), ("EnqueuedURI", uri), ("EnqueuedURIMetaData", meta),
                 ("DesiredFirstTrackNumberEnqueued", 0), ("EnqueueAsNext", 0)])
-        device.play_from_queue(0)
+            if i == 0 and res and "FirstTrackNumberEnqueued" in res:
+                try:
+                    first_track_idx = int(res["FirstTrackNumberEnqueued"]) - 1
+                except Exception:
+                    pass
+        device.play_from_queue(first_track_idx)
         return device.get_current_track_info()
 
     def play_station(self, device, program_id, title="Radio", volume=None):
@@ -480,6 +493,7 @@ Usage: soco_ytmusic.py [options] <command> [arguments]
 
 Commands:
   play <query>              Search song, queue it and play immediately
+  album <name>              Find album, queue all tracks and play
   artist <name>             Find artist, queue top songs and play
   station <query|id>        Start endless radio station for track or artist
   search <cat> <query>      Search catalog (SONGS, ALBUMS, ARTISTS, PLAYLISTS)
@@ -652,6 +666,26 @@ def main():
         print(f"[*] Playing {len(top)} top songs by '{name}' on {dev.player_name}...")
         ym.play_tracks(dev, top)
         print(f"[✓] Playing now! ({top[0].get('title')})")
+
+    elif cmd == "album":
+        name = " ".join(extra).strip()
+        if not name:
+            print("Usage: soco_ytmusic.py album <album name>")
+            return
+        print(f"[*] Searching for album '{name}'...")
+        albums = ym.search("ALBUMS", name, count=3)
+        if not albums:
+            print(f"[!] No albums found matching '{name}'")
+            return
+        alb = albums[0]
+        print(f"[*] Fetching tracks for album '{alb.get('title')}' by {alb.get('artist')}...")
+        tracks = [t for t in ym.browse(alb["id"], count=50) if t.get("itemType") == "track"]
+        if not tracks:
+            print(f"[!] No tracks found in album '{alb.get('title')}'")
+            return
+        print(f"[*] Queueing {len(tracks)} tracks from '{alb.get('title')}' on {dev.player_name}...")
+        ym.play_tracks(dev, tracks)
+        print(f"[✓] Playing now! (First track: {tracks[0].get('title')})")
 
     elif cmd == "station":
         query = " ".join(extra).strip()
