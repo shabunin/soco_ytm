@@ -254,6 +254,19 @@ valid = lambda k: bool(re.fullmatch(r"AIza[0-9A-Za-z_\-]{35}", k))
 api_key = res["header"][0] if res["header"] else (res["heap"][0] if res["heap"] else None)
 ya29_token = res["token"][0] if res["token"] else None
 private_key = res["keys"][0] if res["keys"] else None
+
+# Fallback to existing sonos_creds.json if memory scan missed static keys
+if os.path.exists(DEFAULT_CFG):
+    try:
+        with open(DEFAULT_CFG, "r") as f:
+            prev_cfg = json.load(f)
+            if not api_key:
+                api_key = prev_cfg.get("x_goog_api_key")
+            if not private_key:
+                private_key = prev_cfg.get("private_key")
+    except Exception:
+        pass
+
 # Prefer the SMAPI form "Sonos_<id>_<suffix>" over the bare household id.
 households = sorted(res["households"], key=lambda h: h.count("_") < 2)
 household_id = households[0] if households else None
