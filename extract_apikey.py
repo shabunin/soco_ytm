@@ -228,6 +228,7 @@ elif args.listen > 0:
     time.sleep(args.listen)
 
 KEY_RE = re.compile(r"<(?:key|privateKey)>([A-Za-z0-9+/=]{60,250})</")
+got = False
 
 if args.wait_refresh > 0:
     # The durable <key> (refresh token) only goes over the wire when the app
@@ -237,7 +238,6 @@ if args.wait_refresh > 0:
     log(f"[*] waiting up to {dur_str} for the app's token refresh "
         "(keep the Sonos app running; Ctrl+C to give up)...")
     deadline = time.time() + args.wait_refresh
-    got = False
     try:
         while time.time() < deadline and not got:
             time.sleep(2)
@@ -263,8 +263,19 @@ res = {
     "cdudn": []
 }
 
-# Only scan memory if we don't already have the credentials and wait-refresh wasn't active
-need_scan = (args.wait_refresh == 0) and not (got or any(KEY_RE.search(t) for t in captured_traffic))
+# Check if we already have valid durable credentials in sonos_creds.json
+has_creds = False
+if os.path.exists(DEFAULT_CFG):
+    try:
+        with open(DEFAULT_CFG, "r") as f:
+            cfg = json.load(f)
+            if cfg.get("x_goog_api_key") and cfg.get("private_key"):
+                has_creds = True
+    except Exception:
+        pass
+
+# Only scan memory if we don't already have durable credentials and wait-refresh wasn't active
+need_scan = not has_creds and (args.wait_refresh == 0) and not (got or any(KEY_RE.search(t) for t in captured_traffic))
 if need_scan:
     try:
         res = script.exports_sync.scan()
