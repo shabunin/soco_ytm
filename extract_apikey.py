@@ -80,9 +80,10 @@ rpc.exports = {
               try {
                 const len = args[2].toInt();
                 if (len > 0 && len < 65536) {
-                  const s = args[1].readUtf8String(Math.min(len, 4096));
+                  const s = args[1].readUtf8String(Math.min(len, 16384));
                   if (s && (s.indexOf("googleapis.com") !== -1 || s.indexOf("refreshAuthToken") !== -1 ||
-                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1)) {
+                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1 ||
+                            s.indexOf("<key>") !== -1 || s.indexOf("<privateKey>") !== -1)) {
                     send({ type: "traffic", data: s });
                   }
                 }
@@ -101,9 +102,10 @@ rpc.exports = {
               try {
                 const len = args[2].toInt();
                 if (len > 0 && len < 65536) {
-                  const s = args[1].readUtf8String(Math.min(len, 4096));
+                  const s = args[1].readUtf8String(Math.min(len, 16384));
                   if (s && (s.indexOf("googleapis.com") !== -1 || s.indexOf("refreshAuthToken") !== -1 ||
-                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1)) {
+                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1 ||
+                            s.indexOf("<key>") !== -1 || s.indexOf("<privateKey>") !== -1)) {
                     send({ type: "traffic", data: s });
                   }
                 }
@@ -234,15 +236,12 @@ if args.wait_refresh > 0:
     dur_str = f"{mins_total // 60}h {mins_total % 60}m" if mins_total >= 60 else f"{mins_total} min"
     log(f"[*] waiting up to {dur_str} for the app's token refresh "
         "(keep the Sonos app running; Ctrl+C to give up)...")
-    deadline, next_scan = time.time() + args.wait_refresh, time.time() + 120
+    deadline = time.time() + args.wait_refresh
     got = False
     try:
         while time.time() < deadline and not got:
             time.sleep(2)
             got = any(KEY_RE.search(t) for t in captured_traffic)
-            if not got and time.time() >= next_scan:   # fallback if the hook misses
-                next_scan = time.time() + 120
-                got = bool(script.exports_sync.scan()["keys"])
             if not args.json and not got:
                 left = max(0, int(deadline - time.time()))
                 hours, rem = divmod(left, 3600)
@@ -254,7 +253,23 @@ if args.wait_refresh > 0:
     log("\n[✓] refresh caught — private_key captured" if got
         else "\n[!] no token refresh seen; private_key may be missing")
 
-res = script.exports_sync.scan()
+res = {
+    "header": [],
+    "heap": [],
+    "token": [],
+    "keys": [],
+    "households": [],
+    "sn": [],
+    "cdudn": []
+}
+
+# Only scan memory if we don't already have the credentials and wait-refresh wasn't active
+need_scan = (args.wait_refresh == 0) and not (got or any(KEY_RE.search(t) for t in captured_traffic))
+if need_scan:
+    try:
+        res = script.exports_sync.scan()
+    except Exception as e:
+        log(f"[*] memory scan skipped/unavailable ({e})")
 
 # Process any captured TLS traffic from the hook
 for traffic in captured_traffic:
@@ -281,7 +296,13 @@ api_key = res["header"][0] if res["header"] else (res["heap"][0] if res["heap"] 
 ya29_token = res["token"][0] if res["token"] else None
 private_key = res["keys"][0] if res["keys"] else None
 
-# Fallback to existing sonos_creds.json if memory scan missed static keys
+# Prefer the SMAPI form "Sonos_<id>_<suffix>" over the bare household id.
+households = sorted(res["households"], key=lambda h: h.count("_") < 2)
+household_id = households[0] if households else None
+sn = res["sn"][0] if res["sn"] else None
+cdudn = ("SA_RINCON72711_X_#Svc72711-%s-Token" % res["cdudn"][0]) if res["cdudn"] else None
+
+# Fallback to existing sonos_creds.json if memory scan / traffic missed static keys
 if os.path.exists(DEFAULT_CFG):
     try:
         with open(DEFAULT_CFG, "r") as f:
@@ -290,14 +311,14 @@ if os.path.exists(DEFAULT_CFG):
                 api_key = prev_cfg.get("x_goog_api_key")
             if not private_key:
                 private_key = prev_cfg.get("private_key")
+            if not household_id and prev_cfg.get("household_id"):
+                household_id = prev_cfg.get("household_id")
+            if not sn and prev_cfg.get("sn"):
+                sn = prev_cfg.get("sn")
+            if not cdudn and prev_cfg.get("cdudn"):
+                cdudn = prev_cfg.get("cdudn")
     except Exception:
         pass
-
-# Prefer the SMAPI form "Sonos_<id>_<suffix>" over the bare household id.
-households = sorted(res["households"], key=lambda h: h.count("_") < 2)
-household_id = households[0] if households else None
-sn = res["sn"][0] if res["sn"] else None
-cdudn = ("SA_RINCON72711_X_#Svc72711-%s-Token" % res["cdudn"][0]) if res["cdudn"] else None
 
 # Get device info from speaker if possible
 device_id = None
@@ -323,6 +344,13 @@ try:
             household_id = sp.household_id
 except Exception as e:
     log(f"[!] speaker lookup failed: {e}")
+
+if not device_id and os.path.exists(DEFAULT_CFG):
+    try:
+        with open(DEFAULT_CFG, "r") as f:
+            device_id = json.load(f).get("device_id")
+    except Exception:
+        pass
 
 # The SMAPI householdId carries the same suffix as the cdudn tag
 # ("Sonos_<id>_<suffix>"); rebuild it if memory only had the bare id.
