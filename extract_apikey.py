@@ -91,6 +91,27 @@ rpc.exports = {
           });
           return true;
         }
+      } else if (Process.platform === "windows") {
+        const mod = Process.findModuleByName("sclib-csharp.dll");
+        if (mod) {
+          // mbedtls_ssl_write offset inside sclib-csharp.dll on Windows (build 90.0-77070): 0x13e6260
+          const pWrite = mod.base.add(0x13e6260);
+          Interceptor.attach(pWrite, {
+            onEnter: function (args) {
+              try {
+                const len = args[2].toInt();
+                if (len > 0 && len < 65536) {
+                  const s = args[1].readUtf8String(Math.min(len, 4096));
+                  if (s && (s.indexOf("googleapis.com") !== -1 || s.indexOf("refreshAuthToken") !== -1 ||
+                            s.indexOf("loginToken") !== -1 || s.indexOf("X-Goog-Api-Key") !== -1)) {
+                    send({ type: "traffic", data: s });
+                  }
+                }
+              } catch (e) {}
+            }
+          });
+          return true;
+        }
       }
     } catch (e) {}
     return false;
