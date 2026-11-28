@@ -230,7 +230,9 @@ KEY_RE = re.compile(r"<(?:key|privateKey)>([A-Za-z0-9+/=]{60,250})</")
 if args.wait_refresh > 0:
     # The durable <key> (refresh token) only goes over the wire when the app
     # refreshes its ~1h ya29 token, so keep the hook attached until that happens.
-    log(f"[*] waiting up to {args.wait_refresh // 60} min for the app's hourly token refresh "
+    mins_total = args.wait_refresh // 60
+    dur_str = f"{mins_total // 60}h {mins_total % 60}m" if mins_total >= 60 else f"{mins_total} min"
+    log(f"[*] waiting up to {dur_str} for the app's token refresh "
         "(keep the Sonos app running; Ctrl+C to give up)...")
     deadline, next_scan = time.time() + args.wait_refresh, time.time() + 120
     got = False
@@ -242,8 +244,11 @@ if args.wait_refresh > 0:
                 next_scan = time.time() + 120
                 got = bool(script.exports_sync.scan()["keys"])
             if not args.json and not got:
-                left = int(deadline - time.time())
-                print(f"\r    still waiting… {left // 60:02d}:{left % 60:02d} left ", end="", flush=True)
+                left = max(0, int(deadline - time.time()))
+                hours, rem = divmod(left, 3600)
+                mins, secs = divmod(rem, 60)
+                timer_str = f"{hours:02d}:{mins:02d}:{secs:02d}" if hours > 0 else f"{mins:02d}:{secs:02d}"
+                print(f"\r    still waiting… {timer_str} left ", end="", flush=True)
     except KeyboardInterrupt:
         pass
     log("\n[✓] refresh caught — private_key captured" if got
