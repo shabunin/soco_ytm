@@ -257,15 +257,19 @@ class YouTubeMusic(MusicService):
         return _find(res, "artistId")
 
     def resolve_artist(self, name):
-        for al in self.search("ALBUMS", name, count=6):
-            if al.get("itemType") != "album":
-                continue
-            tracks = [t for t in self.browse(al["id"], count=5)
-                      if t.get("itemType") == "track"]
-            if tracks:
-                aid = self.artist_id_of_track(tracks[0]["id"])
-                if aid:
-                    return aid
+        candidates = [name]
+        if not name.lower().startswith("the "):
+            candidates.append(f"The {name}")
+        for cand in candidates:
+            for al in self.search("ALBUMS", cand, count=6):
+                if al.get("itemType") != "album":
+                    continue
+                tracks = [t for t in self.browse(al["id"], count=5)
+                          if t.get("itemType") == "track"]
+                if tracks:
+                    aid = self.artist_id_of_track(tracks[0]["id"])
+                    if aid:
+                        return aid
         return None
 
     def artist_node(self, artist_id, which="Top Songs"):
@@ -505,6 +509,7 @@ Commands:
   stop                      Stop playback
   info                      Show currently playing track info
   volume [0-100]            Get or set volume
+  repeat [on|off|one]       Get, set or toggle repeat mode (REPEAT_ALL / NORMAL)
   speakers                  Discover and list Sonos speakers on the network
 
 Options:
@@ -581,6 +586,23 @@ def main():
             print(f"Volume set to {vol}% on {dev.player_name}")
         else:
             print(f"Current volume on {dev.player_name}: {dev.volume}%")
+        return
+    elif cmd == "repeat":
+        mode = extra[0].lower() if extra else ""
+        if mode in ("on", "all", "true", "1"):
+            dev.play_mode = "REPEAT_ALL"
+            print(f"Repeat mode set to REPEAT_ALL on {dev.player_name}")
+        elif mode in ("one", "track", "single"):
+            dev.play_mode = "REPEAT_ONE"
+            print(f"Repeat mode set to REPEAT_ONE on {dev.player_name}")
+        elif mode in ("off", "false", "0"):
+            dev.play_mode = "NORMAL"
+            print(f"Repeat mode set to NORMAL (off) on {dev.player_name}")
+        else:
+            cur = dev.play_mode
+            new_mode = "NORMAL" if cur.startswith("REPEAT") else "REPEAT_ALL"
+            dev.play_mode = new_mode
+            print(f"Repeat mode toggled to {new_mode} on {dev.player_name}")
         return
 
     # YT Music SMAPI commands
